@@ -22,15 +22,16 @@ class Thermostat {
   constructor(log, config) {
     this.log = log;
     this.name = config.name;
-    this.maxTemperature = config.maxTemperature || 35;
-    this.minTemperature = config.minTemperature || 0;
-    this.fanRelayPin = config.fanRelayPin || 26;
-    this.heatRelayPin = config.heatRelayPin || 21;
-    this.coolRelayPin = config.coolRelayPin || 20;
+    this.maxTemperature = config.maxTemperature || 30;
+    this.minTemperature = config.minTemperature || 10;
+    this.fanRelayPin = config.fanRelayPin || 2;
+    this.blowerRelayPin = config.blowerRelayPin || 3;
+    this.heatRelayPin = config.heatRelayPin || 4;
+    this.coolRelayPin = config.coolRelayPin || 17;
     this.dhtSensorType = config.dhtSensorType || 22;
-    this.temperatureSensorPin = config.temperatureSensorPin || 4;
+    this.temperatureSensorPin = config.temperatureSensorPin || 18;
     this.minimumOnOffTime = config.minimumOnOffTime || 120000; // In milliseconds
-    this.blowerTurnOffTime = config.blowerTurnOffTime || 80000; // In milliseconds
+    this.blowerTurnOffTime = config.blowerTurnOffTime || 60000; // In milliseconds
     this.startDelay = config.startDelay || 10000; // In milliseconds
     this.temperatureCheckInterval = config.temperatureCheckInterval || 10000; // In milliseconds
 
@@ -40,6 +41,7 @@ class Thermostat {
     };
 
     gpio.setup(this.fanRelayPin, gpio.DIR_HIGH);
+    gpio.setup(this.blowerRelayPin, gpio.DIR_HIGH);
     gpio.setup(this.heatRelayPin, gpio.DIR_HIGH);
     gpio.setup(this.coolRelayPin, gpio.DIR_HIGH);
 
@@ -50,6 +52,7 @@ class Thermostat {
     this.heatingThresholdTemperature = 18;
     this.coolingThresholdTemperature = 24;
     this.isFanRunning = false;
+    this.isBlowerRunning = false;
 
     //Characteristic.TemperatureDisplayUnits.CELSIUS = 0;
     //Characteristic.TemperatureDisplayUnits.FAHRENHEIT = 1;
@@ -116,6 +119,7 @@ class Thermostat {
         this.startSystemTimer = setTimeout(() => {
           this.log(`START ${this.systemStateName(systemToTurnOn)}`);
           gpio.write(HeatingCoolingStateToRelayPin[systemToTurnOn], ON);
+          this.turnBlower(ON);
           this.thermostatService.setCharacteristic(Characteristic.CurrentHeatingCoolingState, systemToTurnOn);
         }, this.startDelay);
       } else {
@@ -124,6 +128,12 @@ class Thermostat {
     } else if (this.currentHeatingCoolingState !== systemToTurnOn) {
       this.turnOffSystem();
     }
+  }
+
+  turnBlower(state) {
+    this.isBlowerRunning = state === ON;
+    this.log(`Turning Blower ${this.isBlowerRunning ? 'ON' : 'OFF'}`);
+    gpio.write(this.blowerRelayPin, state);
   }
 
   turnFan(state) {
@@ -141,6 +151,7 @@ class Thermostat {
       this.log(`STOP ${this.currentlyRunning} | Blower will turn off in ${this.blowerTurnOffTime / 1000} second(s)`);
       gpio.write(HeatingCoolingStateToRelayPin[this.currentHeatingCoolingState], OFF);
       this.stopSystemTimer = setTimeout(() => {
+        this.turnBlower(OFF);
         this.thermostatService.setCharacteristic(Characteristic.CurrentHeatingCoolingState, Characteristic.CurrentHeatingCoolingState.OFF);
       }, this.blowerTurnOffTime);
     } else {
@@ -339,16 +350,12 @@ class Thermostat {
         callback(null, this.isFanRunning);
       })
       .on('set', (value, callback) => {
-        if (this.currentlyRunning === 'Off') {
-          if (value && !this.isFanRunning) {
-            this.turnFan(ON);
-          } else if (!value && this.isFanRunning) {
-            this.turnFan(OFF);
-          }
-          callback(null);
-        } else {
-          callback(new Error('Heating/Cooling System is running so cannot turn on/off the fan'));
+        if (value && !this.isFanRunning) {
+          this.turnFan(ON);
+        } else if (!value && this.isFanRunning) {
+          this.turnFan(OFF);
         }
+        callback(null);
       });
 
     return [informationService, this.thermostatService, this.fanService];
